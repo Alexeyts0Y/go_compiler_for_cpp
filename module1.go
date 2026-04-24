@@ -41,7 +41,11 @@ func main() {
 	result := cleanWhitespace(cleaned)
 
 	// 5. Вывод результата
-	fmt.Print(result)
+	err := os.WriteFile("clean.cpp", []byte(result), 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Ошибка записи clean.cpp: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func checkInvalidChars(s string) error {

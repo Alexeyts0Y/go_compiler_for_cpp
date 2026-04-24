@@ -13,15 +13,21 @@ void sort(int arr[], int n) {
         }
     }
 }
-
+asfsfdasf
 int main() {
 
-    int arr[10] = {10, 9, 8, 7, 6, 1, 2, 3, 4, 5};
+        int arr[10] = {10, 9, 8, 7, 6, 1, 2, 3, 4, 5};
     sort(arr, 10);
-    for (int i = 0; i < 10; i++) {
+    for (int i =          0; i      < 10; i++) {
         cout << arr[i] << " ";
     }
     cout << endl;
     
     return 0;
 }
+/*
+
+asfnasdf
+asjdfnaskljdf
+kajsdfaksf
+*/
