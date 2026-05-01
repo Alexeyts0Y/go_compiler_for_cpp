@@ -11,7 +11,6 @@ arr[j + 1] = temp;
 }
 }
 }
-asfsfdasf
 int main() {
 int arr[10] = {10, 9, 8, 7, 6, 1, 2, 3, 4, 5};
 sort(arr, 10);

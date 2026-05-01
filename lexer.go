@@ -2,11 +2,9 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
-// Типы токенов
 type TokenType string
 
 const (
@@ -19,13 +17,13 @@ const (
 	UNKNOWN      TokenType = "UNKNOWN"
 )
 
-// Структура токена
 type Token struct {
 	Type  TokenType
 	Value string
+	Line  int
+	Col   int
 }
 
-// Таблицы лексем (только для конструкций, присутствующих в test.cpp)
 var keywords = map[string]bool{
 	"using":     true,
 	"namespace": true,
@@ -36,7 +34,6 @@ var keywords = map[string]bool{
 	"return":    true,
 }
 
-// Операторы (двухсимвольные и односимвольные, отсортированы по убыванию длины)
 var operators = []string{"<<", "++", "=", "+", "-", "<", ">"}
 
 // Разделители
@@ -97,24 +94,19 @@ func (l *Lexer) skipWhitespace() {
 	}
 }
 
-// Пропуск директивы препроцессора (от '#' до конца строки)
 func (l *Lexer) skipPreprocessorDirective() {
-	// Текущий символ - '#'
 	for l.pos < len(l.input) && l.current() != '\n' {
 		l.advance()
 	}
-	// Переход через '\n' (если достигнут конец строки)
 	if l.current() == '\n' {
 		l.advance()
 	}
 }
 
-// Проверка: является ли символ допустимой буквой для идентификатора (латиница или '_')
 func isIdentifierLetter(c rune) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
 
-// Проверка: является ли символ допустимой цифрой
 func isDigit(c rune) bool {
 	return c >= '0' && c <= '9'
 }
@@ -228,9 +220,9 @@ func (l *Lexer) Tokenize() {
 		if isIdentifierLetter(c) {
 			word := l.readIdentifier()
 			if keywords[word] {
-				l.tokens = append(l.tokens, Token{KEYWORD, word})
+				l.tokens = append(l.tokens, Token{KEYWORD, word, l.line, l.col})
 			} else {
-				l.tokens = append(l.tokens, Token{IDENTIFIER, word})
+				l.tokens = append(l.tokens, Token{IDENTIFIER, word, l.line, l.col})
 			}
 			continue
 		}
@@ -239,9 +231,9 @@ func (l *Lexer) Tokenize() {
 		if isDigit(c) {
 			num, ok := l.readInteger()
 			if !ok {
-				l.tokens = append(l.tokens, Token{UNKNOWN, num})
+				l.tokens = append(l.tokens, Token{UNKNOWN, num, l.line, l.col})
 			} else {
-				l.tokens = append(l.tokens, Token{CONSTANT_INT, num})
+				l.tokens = append(l.tokens, Token{CONSTANT_INT, num, l.line, l.col})
 			}
 			continue
 		}
@@ -250,23 +242,23 @@ func (l *Lexer) Tokenize() {
 		if c == '"' {
 			str, ok := l.readString()
 			if ok {
-				l.tokens = append(l.tokens, Token{CONSTANT_STR, str})
+				l.tokens = append(l.tokens, Token{CONSTANT_STR, str, l.line, l.col})
 			} else {
-				l.tokens = append(l.tokens, Token{UNKNOWN, str})
+				l.tokens = append(l.tokens, Token{UNKNOWN, str, l.line, l.col})
 			}
 			continue
 		}
 
 		// Оператор
 		if op, found := l.tryReadOperator(); found {
-			l.tokens = append(l.tokens, Token{OPERATOR, op})
+			l.tokens = append(l.tokens, Token{OPERATOR, op, l.line, l.col})
 			l.pos += len(op)
 			continue
 		}
 
 		// Разделитель
 		if delimiters[c] {
-			l.tokens = append(l.tokens, Token{DELIMITER, string(c)})
+			l.tokens = append(l.tokens, Token{DELIMITER, string(c), l.line, l.col})
 			l.advance()
 			continue
 		}
@@ -274,47 +266,47 @@ func (l *Lexer) Tokenize() {
 		// Недопустимый символ
 		l.errors = append(l.errors, fmt.Sprintf("Недопустимый символ '%c' (U+%04X) на строке %d, столбце %d",
 			c, c, l.line, l.col))
-		l.tokens = append(l.tokens, Token{UNKNOWN, string(c)})
+		l.tokens = append(l.tokens, Token{UNKNOWN, string(c), l.line, l.col})
 		l.advance()
 	}
 }
 
-func main() {
-	// Чтение очищенного файла
-	data, err := os.ReadFile("clean.cpp")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Ошибка чтения clean.cpp: %v\n", err)
-		os.Exit(1)
-	}
-	source := string(data)
+// func main() {
+// 	// Чтение очищенного файла
+// 	data, err := os.ReadFile("clean.cpp")
+// 	if err != nil {
+// 		fmt.Fprintf(os.Stderr, "Ошибка чтения clean.cpp: %v\n", err)
+// 		os.Exit(1)
+// 	}
+// 	source := string(data)
 
-	// Лексический анализ
-	lexer := NewLexer(source)
-	lexer.Tokenize()
+// 	// Лексический анализ
+// 	lexer := NewLexer(source)
+// 	lexer.Tokenize()
 
-	// Вывод таблицы лексем
-	fmt.Println("Лексема     | Тип")
-	fmt.Println("------------+----------------------")
-	for _, tok := range lexer.tokens {
-		fmt.Printf("%-12s| %s\n", tok.Value, tok.Type)
-	}
+// 	// Вывод таблицы лексем
+// 	fmt.Println("Лексема     | Тип")
+// 	fmt.Println("------------+----------------------")
+// 	for _, tok := range lexer.tokens {
+// 		fmt.Printf("%-12s| %s\n", tok.Value, tok.Type)
+// 	}
 
-	// Формирование списка пар для синтаксического анализатора
-	var tokenPairs []string
-	for _, tok := range lexer.tokens {
-		tokenPairs = append(tokenPairs, fmt.Sprintf("(%s, %s)", tok.Type, tok.Value))
-	}
-	fmt.Println()
-	fmt.Println("[" + strings.Join(tokenPairs, ", ") + "]")
+// 	// Формирование списка пар для синтаксического анализатора
+// 	var tokenPairs []string
+// 	for _, tok := range lexer.tokens {
+// 		tokenPairs = append(tokenPairs, fmt.Sprintf("(%s, %s)", tok.Type, tok.Value))
+// 	}
+// 	fmt.Println()
+// 	fmt.Println("[" + strings.Join(tokenPairs, ", ") + "]")
 
-	// Итоги
-	if len(lexer.errors) > 0 {
-		fmt.Println("\nЛексические ошибки:")
-		for _, errMsg := range lexer.errors {
-			fmt.Println("  -", errMsg)
-		}
-		fmt.Printf("Анализ завершён с %d ошибками.\n", len(lexer.errors))
-	} else {
-		fmt.Printf("\nЛексический анализ завершён успешно. Обнаружено %d токенов. Ошибок не найдено.\n", len(lexer.tokens))
-	}
-}
+// 	// Итоги
+// 	if len(lexer.errors) > 0 {
+// 		fmt.Println("\nЛексические ошибки:")
+// 		for _, errMsg := range lexer.errors {
+// 			fmt.Println("  -", errMsg)
+// 		}
+// 		fmt.Printf("Анализ завершён с %d ошибками.\n", len(lexer.errors))
+// 	} else {
+// 		fmt.Printf("\nЛексический анализ завершён успешно. Обнаружено %d токенов. Ошибок не найдено.\n", len(lexer.tokens))
+// 	}
+// }
