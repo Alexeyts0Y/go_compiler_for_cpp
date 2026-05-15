@@ -2,14 +2,13 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
 // ---- AST-узлы ----
 type ProgramNode struct {
 	Using     *UsingDirectiveNode
-	Functions []*FunctionDefNode // было *FunctionDefNode
+	Functions []*FunctionDefNode
 }
 
 type UsingDirectiveNode struct {
@@ -19,14 +18,21 @@ type UsingDirectiveNode struct {
 type FunctionDefNode struct {
 	ReturnType string
 	Name       string
-	Params     []ParamNode // список параметров
+	Params     []ParamNode
 	Body       *CompoundStmtNode
 }
 
 type ParamNode struct {
-	Type string
-	Name string
+	Type    string
+	Name    string
+	IsArray bool
 }
+
+type ArrayInitNode struct {
+	Values []ExprNode
+}
+
+func (ArrayInitNode) isExpr() {}
 
 type CompoundStmtNode struct {
 	Statements []StmtNode
@@ -35,15 +41,17 @@ type CompoundStmtNode struct {
 type StmtNode interface{ isStmt() }
 
 type VarDeclNode struct {
-	Type string
-	Name string
-	Init ExprNode // может быть nil
+	Type      string
+	Name      string
+	Init      ExprNode
+	IsArray   bool
+	ArraySize ExprNode
 }
 
 func (VarDeclNode) isStmt() {}
 
 type AssignStmtNode struct {
-	Left  ExprNode // теперь выражение, чтобы поддерживать arr[i] = ...
+	Left  ExprNode
 	Right ExprNode
 }
 
@@ -58,7 +66,7 @@ type IfStmtNode struct {
 func (IfStmtNode) isStmt() {}
 
 type ForStmtNode struct {
-	Init      StmtNode // может быть VarDecl или AssignStmt (или nil)
+	Init      StmtNode
 	Condition ExprNode
 	Post      ExprNode
 	Body      *CompoundStmtNode
@@ -90,7 +98,7 @@ type BinaryExprNode struct {
 func (BinaryExprNode) isExpr() {}
 
 type UnaryExprNode struct {
-	Op     string // ++ постфиксный/префиксный упрощённо
+	Op     string
 	Right  ExprNode
 	Prefix bool
 }
@@ -216,7 +224,6 @@ func (p *Parser) parseUsingDirective() (*UsingDirectiveNode, error) {
 	return &UsingDirectiveNode{Namespace: tok.Value}, nil
 }
 
-// Функция: тип имя ( параметры? ) тело
 func (p *Parser) parseFunctionDef() (*FunctionDefNode, error) {
 	typ, err := p.parseType()
 	if err != nil {
@@ -274,14 +281,15 @@ func (p *Parser) parseParameter() (ParamNode, error) {
 	if err != nil {
 		return ParamNode{}, err
 	}
-	// разрешаем [] для параметров-массивов
+	isArray := false
 	if p.peek().Type == DELIMITER && p.peek().Value == "[" {
 		p.advance() // [
 		if _, err = p.expect(DELIMITER, "]"); err != nil {
 			return ParamNode{}, err
 		}
+		isArray = true
 	}
-	return ParamNode{Type: typ, Name: tok.Value}, nil
+	return ParamNode{Type: typ, Name: tok.Value, IsArray: isArray}, nil
 }
 
 func (p *Parser) parseType() (string, error) {
@@ -328,10 +336,7 @@ func (p *Parser) parseStatement() (StmtNode, error) {
 	if tok.Type == KEYWORD && tok.Value == "return" {
 		return p.parseReturnStmt()
 	}
-	// если начинается с идентификатора или константы/строки/скобки – оператор-выражение или присваивание
-	// Попробуем разобрать как выражение, потом если ';', то ExprStmt, если '=' то AssignStmt
-	// нужно отличать присваивание (a = expr;) от выражения-оператора (cout << ...;)
-	// Упростим: разбираем выражение, потом смотрим, что дальше:
+
 	expr, err := p.parseExpression()
 	if err != nil {
 		return nil, err
@@ -365,25 +370,32 @@ func (p *Parser) parseVarDeclOrForInit() (StmtNode, error) {
 		return nil, err
 	}
 	name := tok.Value
-	// Может быть объявление массива: int arr[10] = {...} или int arr[]
+	isArray := false
+	// Разбор размера массива (необязательно)
+	var arraySize ExprNode = nil
 	if p.peek().Type == DELIMITER && p.peek().Value == "[" {
-		p.advance()
-		// размер массива (может быть число, или пусто)
-		if p.peek().Type == CONSTANT_INT || p.peek().Type == IDENTIFIER {
-			p.advance() // пропускаем размер
-		} // иначе просто ]
+		isArray = true
+		p.advance() // [
+		if p.peek().Type != DELIMITER || p.peek().Value != "]" {
+			arraySize, err = p.parseExpression()
+			if err != nil {
+				return nil, err
+			}
+		}
 		if _, err = p.expect(DELIMITER, "]"); err != nil {
 			return nil, err
 		}
 	}
-	// инициализация (необязательно)
+
 	var init ExprNode
 	if p.peek().Type == OPERATOR && p.peek().Value == "=" {
 		p.advance()
-		// если следующая '{' - список инициализации, обработаем упрощённо
 		if p.peek().Type == DELIMITER && p.peek().Value == "{" {
-			// пропускаем содержимое до закрывающей '}'
-			p.skipBalancedBraces()
+			// Инициализация массива списком
+			init, err = p.parseArrayInitializer()
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			init, err = p.parseExpression()
 			if err != nil {
@@ -394,7 +406,32 @@ func (p *Parser) parseVarDeclOrForInit() (StmtNode, error) {
 	if _, err = p.expect(DELIMITER, ";"); err != nil {
 		return nil, err
 	}
-	return &VarDeclNode{Type: typ, Name: name, Init: init}, nil
+	// Для простоты сохраним isArray и arraySize в VarDeclNode (нужно расширить структуру)
+	// Предположим, что VarDeclNode получил новые поля: IsArray, ArraySize
+	return &VarDeclNode{Type: typ, Name: name, Init: init, IsArray: isArray, ArraySize: arraySize}, nil
+}
+
+func (p *Parser) parseArrayInitializer() (*ArrayInitNode, error) {
+	if _, err := p.expect(DELIMITER, "{"); err != nil {
+		return nil, err
+	}
+	values := []ExprNode{}
+	for !(p.peek().Type == DELIMITER && p.peek().Value == "}") {
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, expr)
+		if p.peek().Type == DELIMITER && p.peek().Value == "," {
+			p.advance()
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(DELIMITER, "}"); err != nil {
+		return nil, err
+	}
+	return &ArrayInitNode{Values: values}, nil
 }
 
 // skipBalancedBraces пропускает всё от текущей { до соответствующей }, поддерживая вложенность
@@ -499,10 +536,6 @@ func (p *Parser) parseReturnStmt() (*ReturnStmtNode, error) {
 }
 
 // ---- Выражения ----
-
-// Expression ::= Assignment
-// Assignment ::= LogicalOr ('=' LogicalOr)?  -- мы вынесли присваивание на уровень statement, поэтому здесь не нужно
-// Но для упрощения будем разбирать от низкого приоритета: сложение, сравнение, битовые сдвиги (<<)
 func (p *Parser) parseExpression() (ExprNode, error) {
 	return p.parseComparison()
 }
@@ -719,6 +752,13 @@ func printStmt(stmt StmtNode, childIndent string, last bool) {
 	switch s := stmt.(type) {
 	case *VarDeclNode:
 		fmt.Printf("var_decl: %s %s", s.Type, s.Name)
+		if s.IsArray {
+			fmt.Print("[")
+			if s.ArraySize != nil {
+				printExpr(s.ArraySize)
+			}
+			fmt.Print("]")
+		}
 		if s.Init != nil {
 			fmt.Print(" = ")
 			printExpr(s.Init)
@@ -777,7 +817,6 @@ func printStmt(stmt StmtNode, childIndent string, last bool) {
 		printExpr(s.Expr)
 		fmt.Println()
 	default:
-		// На случай, если встретился неизвестный тип утверждения
 		fmt.Printf("unknown_stmt(%T)\n", stmt)
 	}
 }
@@ -832,45 +871,54 @@ func printExpr(expr ExprNode) {
 			printExpr(a)
 		}
 		fmt.Print(")")
+	case *ArrayInitNode:
+		fmt.Print("{")
+		for i, v := range e.Values {
+			if i > 0 {
+				fmt.Print(", ")
+			}
+			printExpr(v)
+		}
+		fmt.Print("}")
 	default:
 		fmt.Print("?")
 	}
 }
 
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Использование: go run lexer.go parser.go clean.cpp")
-		os.Exit(1)
-	}
-	data, err := os.ReadFile(os.Args[1])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Ошибка чтения: %v\n", err)
-		os.Exit(1)
-	}
-	source := string(data)
+// func main() {
+// 	if len(os.Args) < 2 {
+// 		fmt.Fprintln(os.Stderr, "Использование: go run lexer.go parser.go clean.cpp")
+// 		os.Exit(1)
+// 	}
+// 	data, err := os.ReadFile(os.Args[1])
+// 	if err != nil {
+// 		fmt.Fprintf(os.Stderr, "Ошибка чтения: %v\n", err)
+// 		os.Exit(1)
+// 	}
+// 	source := string(data)
 
-	lexer := NewLexer(source)
-	lexer.Tokenize()
-	if len(lexer.errors) > 0 {
-		fmt.Println("Лексические ошибки:")
-		for _, e := range lexer.errors {
-			fmt.Println("  -", e)
-		}
-		os.Exit(1)
-	}
+// 	lexer := NewLexer(source)
+// 	lexer.Tokenize()
+// 	if len(lexer.errors) > 0 {
+// 		fmt.Println("Лексические ошибки:")
+// 		for _, e := range lexer.errors {
+// 			fmt.Println("  -", e)
+// 		}
+// 		os.Exit(1)
+// 	}
 
-	parser := NewParser(lexer.tokens)
-	ast, errs := parser.Parse()
-	if len(errs) > 0 {
-		fmt.Println("\nСинтаксические ошибки:")
-		for _, e := range errs {
-			fmt.Println("  -", e)
-		}
-		fmt.Printf("Анализ завершён с %d ошибками.\n", len(errs))
-		os.Exit(1)
-	}
+// 	parser := NewParser(lexer.tokens)
+// 	ast, errs := parser.Parse()
+// 	if len(errs) > 0 {
+// 		fmt.Println("\nСинтаксические ошибки:")
+// 		for _, e := range errs {
+// 			fmt.Println("  -", e)
+// 		}
+// 		fmt.Printf("Анализ завершён с %d ошибками.\n", len(errs))
+// 		os.Exit(1)
+// 	}
 
-	fmt.Println("Синтаксический анализ завершён успешно. AST:")
-	printAST(ast)
-	fmt.Println("\nОшибок не найдено.")
-}
+// 	fmt.Println("Синтаксический анализ завершён успешно. AST:")
+// 	printAST(ast)
+// 	fmt.Println("\nОшибок не найдено.")
+// }

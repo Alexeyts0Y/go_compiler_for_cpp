@@ -7,45 +7,34 @@ import (
 	"strings"
 )
 
-func main() {
-	var input string
-
-	if len(os.Args) > 1 {
-		data, err := os.ReadFile(os.Args[1])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Ошибка чтения файла: %v\n", err)
-			os.Exit(1)
-		}
-		input = string(data)
-	} else {
-		fmt.Fprintf(os.Stderr, "Ошибка чтения файла: Не указано имя файла")
-		os.Exit(1)
+func Preprocess(inputPath string) error {
+	data, err := os.ReadFile(inputPath)
+	if err != nil {
+		return fmt.Errorf("ошибка чтения файла: %v", err)
 	}
+	input := string(data)
 
-	// 1. Проверка на недопустимые символы (управляющие символы, кроме пробельных)
+	// 1. Проверка на недопустимые символы
 	if err := checkInvalidChars(input); err != nil {
-		fmt.Fprintf(os.Stderr, "Ошибка: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// 2. Проверка на незакрытые многострочные комментарии
 	if err := checkUnclosedComments(input); err != nil {
-		fmt.Fprintf(os.Stderr, "Ошибка: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
-	// 3. Удаление комментариев с помощью регулярных выражений
+	// 3. Удаление комментариев
 	cleaned := removeComments(input)
 
 	// 4. Очистка пробельных символов и пустых строк
 	result := cleanWhitespace(cleaned)
 
-	// 5. Вывод результата
-	err := os.WriteFile("clean.cpp", []byte(result), 0644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Ошибка записи clean.cpp: %v\n", err)
-		os.Exit(1)
+	// 5. Запись результата
+	if err := os.WriteFile("clean.cpp", []byte(result), 0644); err != nil {
+		return fmt.Errorf("ошибка записи clean.cpp: %v", err)
 	}
+	return nil
 }
 
 func checkInvalidChars(s string) error {
@@ -108,6 +97,5 @@ func cleanWhitespace(s string) string {
 		cleaned := spaceRegex.ReplaceAllString(trimmed, " ")
 		resultLines = append(resultLines, cleaned)
 	}
-
 	return strings.Join(resultLines, "\n")
 }
